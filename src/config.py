@@ -26,9 +26,9 @@ class Settings(BaseSettings):
     # 分诊用的模型，留空则回退到 claude_model；分诊只是单轮零工具的分类调用，
     # 有更便宜/更快的模型可用时可以单独配置。
     triage_model: str = ""
-    agent_max_turns: int = 30
+    agent_max_turns: int = 90
     agent_max_budget_usd: float | None = 1.0
-    agent_timeout_seconds: int = 300
+    agent_timeout_seconds: int = 600
     agent_progress_update_interval_seconds: int = 20
     targets_registry_path: Path = Path("./config/targets.yaml")
     scratch_dir: Path = Path("./data/scratch")

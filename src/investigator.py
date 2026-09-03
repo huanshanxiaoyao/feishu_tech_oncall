@@ -31,6 +31,16 @@ from .tools.audit import build_audit_hooks
 
 log = structlog.get_logger()
 
+# 排查资源（轮次/预算/超时）耗尽但还没得出结论——这不是系统故障，用户不需要看
+# subtype/terminal_reason 这些技术细节，直接引导去找人工。
+_RESOURCE_LIMIT_SUBTYPES = {"error_max_turns", "error_max_budget_usd"}
+_RESOURCE_LIMIT_TERMINAL_REASONS = {"max_turns"}
+_RESOURCE_LIMIT_MESSAGE = "这个问题排查起来比较复杂，在当前排查资源下暂时没能得出结论，建议直接联系技术专员协助处理。"
+
+
+def _is_resource_limit_exhausted(subtype: str | None, terminal_reason: str | None) -> bool:
+    return subtype in _RESOURCE_LIMIT_SUBTYPES or terminal_reason in _RESOURCE_LIMIT_TERMINAL_REASONS
+
 SYSTEM_PROMPT = """你是一个线上问题排查助手，正在协助排查一个真实的生产问题。
 
 你只能使用系统提供给你的工具（都是只读的，除了一个用于记笔记的临时目录）。不要假设你
@@ -144,7 +154,7 @@ class Investigator:
             )
         except asyncio.TimeoutError:
             log.warning("investigation_timeout", short_id=short_id)
-            return InvestigationResult(status="timeout", error_text="排查超时，已终止")
+            return InvestigationResult(status="timeout", error_text=_RESOURCE_LIMIT_MESSAGE)
         except ResultError as exc:
             # 新版 claude_agent_sdk 在 CLI 以 is_error 结果收尾、进程随后非零退出时
             # 不会把它当 ResultMessage yield 出来，而是直接抛这个异常——它比通用
@@ -159,9 +169,13 @@ class Investigator:
                 api_error_status=exc.api_error_status,
                 result=exc.result,
             )
+            if _is_resource_limit_exhausted(exc.subtype, exc.terminal_reason):
+                error_text = _RESOURCE_LIMIT_MESSAGE
+            else:
+                error_text = f"排查失败（{exc.subtype or exc.terminal_reason or '未知原因'}），请联系管理员查看日志"
             return InvestigationResult(
                 status="failed",
-                error_text=f"排查失败（{exc.subtype or exc.terminal_reason or '未知原因'}），请联系管理员查看日志",
+                error_text=error_text,
                 session_id=exc.session_id,
             )
         except Exception:
@@ -198,9 +212,13 @@ class Investigator:
             return InvestigationResult(status="failed", error_text="Agent 未返回结果", session_id=session_id)
 
         if last_result.is_error:
+            if _is_resource_limit_exhausted(last_result.subtype, last_result.terminal_reason):
+                error_text = _RESOURCE_LIMIT_MESSAGE
+            else:
+                error_text = f"排查失败（{last_result.subtype}）"
             return InvestigationResult(
                 status="failed",
-                error_text=f"排查失败（{last_result.subtype}）",
+                error_text=error_text,
                 session_id=last_result.session_id,
                 turns_used=last_result.num_turns,
                 cost_usd=last_result.total_cost_usd,
