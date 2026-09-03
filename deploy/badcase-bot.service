@@ -1,0 +1,27 @@
+[Unit]
+Description=badcase-bot - 线上排查助手飞书机器人（第一步：消息链路骨架）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=deploy
+WorkingDirectory=/opt/workspace/tech_oncall
+EnvironmentFile=/opt/workspace/tech_oncall/.env
+ExecStart=/opt/workspace/tech_oncall/.venv/bin/python -m src.main
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=badcase-bot
+
+# 最小加固；不引入网络/文件系统隔离以外的限制，避免和后续第二步接生产数据源冲突
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

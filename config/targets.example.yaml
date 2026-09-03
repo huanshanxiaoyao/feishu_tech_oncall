@@ -1,0 +1,50 @@
+# 排查 Agent 能访问哪些代码/日志/数据库/命令的白名单配置。
+#
+# 拷贝这个文件到 targets.yaml（同目录），再把下面的占位路径/连接串换成真实值。
+# targets.yaml 不提交进版本库（含真实的内网路径/服务名），只有这个 .example 文件提交。
+#
+# 默认原则：这里列出来的一切都是只读；数据库连接串必须是只读账号（readonly_role
+# 只是文档说明，真正的只读保证来自账号本身的权限，工具层的 SQL 关键字过滤只是辅助防线）。
+
+version: 1
+
+code_targets:
+  - name: ai4all_bridge
+    root: /opt/workspace/ai4all_bridge   # 占位，按需修改
+    readable_globs: ["**/*.py", "**/*.md", "**/*.toml", "**/*.yaml"]
+    deny_globs: ["**/.env", "**/.git/**", "**/secrets/**", "**/*.pem", "**/*.key"]
+    max_file_bytes: 200000
+
+  # - name: plum_admin
+  #   root: /opt/workspace/plum_admin
+  #   readable_globs: ["**/*.ts", "**/*.tsx", "**/*.md"]
+  #   deny_globs: ["**/.env*", "**/.git/**", "**/node_modules/**"]
+
+  # - name: plum_chat
+  #   root: /opt/workspace/plum_chat
+  #   readable_globs: ["**/*.ts", "**/*.tsx", "**/*.md"]
+  #   deny_globs: ["**/.env*", "**/.git/**", "**/node_modules/**"]
+
+log_targets: []
+  # - name: ai4all_bridge_app
+  #   path: /var/log/apps/ai4all_bridge   # 确认这三个业务的日志实际落在哪之后再填
+  #   pattern: "*.log"
+  #   max_lines_per_read: 2000
+
+databases: []
+  # - name: plum_prod_pg
+  #   engine: postgres
+  #   dsn_env: PLUM_PG_DSN_RO   # 真实 DSN 放 .env，不放这个文件里
+  #   readonly_role: true
+  #   query_timeout_seconds: 10
+  #   max_rows: 500
+
+shell:
+  allowed_commands: []
+  # allowed_commands:
+  #   - "systemctl status *"
+  #   - "journalctl -u * --since *"
+  #   - "df -h"
+  #   - "ping -c 4 *"
+  #   - "ss -tlnp"
+  timeout_seconds: 15

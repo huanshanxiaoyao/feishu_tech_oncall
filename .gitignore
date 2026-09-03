@@ -1,0 +1,17 @@
+# secrets / local env
+.env
+
+# real target registry (含内网真实路径/服务名，见 config/targets.example.yaml 的说明)
+config/targets.yaml
+
+# runtime data (sqlite db、排查过程产出的 scratch 文件，含真实用户消息内容)
+data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# misc
+.DS_Store
