@@ -16,6 +16,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     PermissionResultDeny,
+    ResultError,
     ResultMessage,
     ToolPermissionContext,
     ToolUseBlock,
@@ -144,6 +145,25 @@ class Investigator:
         except asyncio.TimeoutError:
             log.warning("investigation_timeout", short_id=short_id)
             return InvestigationResult(status="timeout", error_text="排查超时，已终止")
+        except ResultError as exc:
+            # 新版 claude_agent_sdk 在 CLI 以 is_error 结果收尾、进程随后非零退出时
+            # 不会把它当 ResultMessage yield 出来，而是直接抛这个异常——它比通用
+            # Exception 携带更多信息（subtype/terminal_reason/errors），值得单独记录，
+            # 否则会被下面的 `except Exception` 兜底成一句没有信息量的通用文案。
+            log.error(
+                "investigation_failed_result_error",
+                short_id=short_id,
+                subtype=exc.subtype,
+                terminal_reason=exc.terminal_reason,
+                errors=exc.errors,
+                api_error_status=exc.api_error_status,
+                result=exc.result,
+            )
+            return InvestigationResult(
+                status="failed",
+                error_text=f"排查失败（{exc.subtype or exc.terminal_reason or '未知原因'}），请联系管理员查看日志",
+                session_id=exc.session_id,
+            )
         except Exception:
             log.exception("investigation_failed", short_id=short_id)
             return InvestigationResult(status="failed", error_text="排查过程中出现内部错误，请联系管理员查看日志")
