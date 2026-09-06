@@ -12,7 +12,9 @@ EnvironmentFile=/opt/workspace/tech_oncall/.env
 ExecStart=/opt/workspace/tech_oncall/.venv/bin/python -m src.main
 Restart=always
 RestartSec=5
-TimeoutStopSec=15
+# 要大于 SHUTDOWN_GRACE_SECONDS（默认 20s）+ 关连接/收线程池的开销，
+# 否则在跑的排查还没来得及把卡片更新成「已中断」就被 SIGKILL 了。
+TimeoutStopSec=45
 KillSignal=SIGTERM
 
 StandardOutput=journal

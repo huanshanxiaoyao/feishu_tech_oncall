@@ -1,7 +1,9 @@
 import asyncio
+import contextlib
 import json
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import structlog
@@ -24,6 +26,27 @@ from .store import Store
 log = structlog.get_logger()
 
 _LOCKOUT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+# 服务收到 SIGTERM 时被砍掉的排查。区别于 investigator 内部的失败：这不是排查本身
+# 出了问题，而是运维动作打断的，所以文案要引导用户重发而不是去找管理员看日志。
+_SHUTDOWN_ABORT_TEXT = "服务重启，本次排查已中断，请重新 @ 我发起一次。"
+
+
+@dataclass
+class _Request:
+    """一次排查请求在「已受理卡片发出之后」需要一路带下去的上下文。
+
+    抽出来是为了让 `_process` 能在最外层接住 CancelledError 并做收尾，
+    而不用把十来个局部变量都摊在同一个函数里。
+    """
+
+    event_id: str
+    chat_id: str
+    open_id: str
+    message_id: str
+    short_id: str
+    raw_text: str
+    card_message_id: str
 
 
 def _remaining_minutes(locked_until: str) -> int:
@@ -95,15 +118,59 @@ class Handler:
         card_message_id = await self._gateway.send_card(chat_id, accepted_card)
         bound_log.info("accepted_card_sent", short_id=short_id, card_message_id=card_message_id)
 
+        request = _Request(
+            event_id=event_id,
+            chat_id=chat_id,
+            open_id=open_id,
+            message_id=message_id,
+            short_id=short_id,
+            raw_text=raw_text,
+            card_message_id=card_message_id,
+        )
+
+        try:
+            await self._run_case(request, bound_log)
+        except asyncio.CancelledError:
+            # 关停时 main.py 会 cancel 掉没跑完的任务。此时 event loop 还在跑
+            # （见 main._shutdown 的最后一次 gather），所以这里的 await 仍然有效，
+            # 能把 case 落库、把卡片从「已受理」更新成「已中断」，
+            # 不会留一张永远转圈的卡片。
+            bound_log.warning("processing_cancelled_by_shutdown", short_id=short_id)
+            await self._abort_case(request)
+            raise
+
+    async def _abort_case(self, request: _Request) -> None:
+        """被关停打断时的收尾。已经在异常路径上了，这里的任何失败都不该再往外抛。"""
+        # 绝大多数中断发生在排查过程中（此时 case 早就建好了），但也可能卡在
+        # 更靠前的 get_user_name/triage 上——那时 case 还不存在，直接 UPDATE 会打空，
+        # 请求就在库里彻底没留痕。所以先补一次 create（已存在会抛主键冲突，忽略掉）。
+        with contextlib.suppress(Exception):
+            await self._store.create_case(short_id=request.short_id, problem_text=request.raw_text)
+        with contextlib.suppress(Exception):
+            await self._store.complete_case(
+                request.short_id, status="failed", error_text=_SHUTDOWN_ABORT_TEXT
+            )
+        with contextlib.suppress(Exception):
+            await self._gateway.update_card(
+                request.card_message_id,
+                build_failed_card(request.short_id, request.raw_text, _SHUTDOWN_ABORT_TEXT),
+            )
+
+    async def _run_case(self, request: _Request, bound_log) -> None:
+        short_id = request.short_id
+        raw_text = request.raw_text
+        open_id = request.open_id
+        card_message_id = request.card_message_id
+
         user_name = await self._gateway.get_user_name(open_id)
 
         await self._store.save_message(
             short_id=short_id,
-            event_id=event_id,
-            chat_id=chat_id,
+            event_id=request.event_id,
+            chat_id=request.chat_id,
             open_id=open_id,
             user_name=user_name,
-            message_id=message_id,
+            message_id=request.message_id,
             raw_text=raw_text,
         )
         bound_log.info("message_stored", short_id=short_id)
