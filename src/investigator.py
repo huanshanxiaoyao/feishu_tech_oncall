@@ -41,6 +41,21 @@ _RESOURCE_LIMIT_MESSAGE = "这个问题排查起来比较复杂，在当前排�
 def _is_resource_limit_exhausted(subtype: str | None, terminal_reason: str | None) -> bool:
     return subtype in _RESOURCE_LIMIT_SUBTYPES or terminal_reason in _RESOURCE_LIMIT_TERMINAL_REASONS
 
+
+def _failure_error_text(
+    subtype: str | None,
+    terminal_reason: str | None,
+) -> str:
+    if _is_resource_limit_exhausted(subtype, terminal_reason):
+        return _RESOURCE_LIMIT_MESSAGE
+
+    # Claude CLI 的 API 错误结果可能同时给出 subtype="success"、
+    # is_error=true、terminal_reason="api_error"。这里的 success 只表示
+    # agent loop 自身走完，不能作为用户可见的失败原因。
+    reason = subtype if subtype and subtype != "success" else terminal_reason
+    return f"排查失败（{reason or '未知原因'}），请联系管理员查看日志"
+
+
 SYSTEM_PROMPT = """你是一个线上问题排查助手，正在协助排查一个真实的生产问题。
 
 你只能使用系统提供给你的工具（都是只读的，除了一个用于记笔记的临时目录）。不要假设你
@@ -169,13 +184,9 @@ class Investigator:
                 api_error_status=exc.api_error_status,
                 result=exc.result,
             )
-            if _is_resource_limit_exhausted(exc.subtype, exc.terminal_reason):
-                error_text = _RESOURCE_LIMIT_MESSAGE
-            else:
-                error_text = f"排查失败（{exc.subtype or exc.terminal_reason or '未知原因'}），请联系管理员查看日志"
             return InvestigationResult(
                 status="failed",
-                error_text=error_text,
+                error_text=_failure_error_text(exc.subtype, exc.terminal_reason),
                 session_id=exc.session_id,
             )
         except Exception:
@@ -212,13 +223,11 @@ class Investigator:
             return InvestigationResult(status="failed", error_text="Agent 未返回结果", session_id=session_id)
 
         if last_result.is_error:
-            if _is_resource_limit_exhausted(last_result.subtype, last_result.terminal_reason):
-                error_text = _RESOURCE_LIMIT_MESSAGE
-            else:
-                error_text = f"排查失败（{last_result.subtype}）"
             return InvestigationResult(
                 status="failed",
-                error_text=error_text,
+                error_text=_failure_error_text(
+                    last_result.subtype, last_result.terminal_reason
+                ),
                 session_id=last_result.session_id,
                 turns_used=last_result.num_turns,
                 cost_usd=last_result.total_cost_usd,
